@@ -31,8 +31,27 @@ def to_csv(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
 def audit_export(auditor: Auditor) -> tuple[list[str], list[list[str]]]:
     """Columns and rows for the dosing audit trail."""
 
-    columns = ["time", "kind", "detail", "id"]
-    rows = [[entry.time, entry.kind, entry.detail, entry.id] for entry in auditor.entries()]
+    columns = [
+        "time",
+        "kind",
+        "detail",
+        "amount",
+        "phase",
+        "round_id",
+        "id",
+    ]
+    rows = [
+        [
+            entry.time,
+            entry.kind,
+            entry.detail,
+            "" if entry.amount is None else entry.amount,
+            entry.phase,
+            entry.round_id,
+            entry.id,
+        ]
+        for entry in auditor.entries()
+    ]
     return columns, rows
 
 

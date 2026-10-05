@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from waterplant.chlor import validate_demand
+from waterplant.chlor import (
+    validate_demand,
+    validate_elapsed_minutes,
+    validate_residual,
+)
 from waterplant.clearwell import validate_level
 from waterplant.filter import validate_zone
 from waterplant.flow import calibrate_meter, validate_factor
@@ -143,14 +147,155 @@ def flow_replace(server: "Server", request: Request) -> Response:
 
 
 def chlor_target(server: "Server", request: Request) -> Response:
+    if "target" in request.payload:
+        target = request.float_field("target")
+        validate_residual(target, "target")
+        saved = server.runtime.chlor_doser.set_target(target)
+        return json_response({"target": saved, "mode": "residual_target"})
     demand = request.float_field("demand")
     validate_demand(demand)
     target = server.runtime.well.update_residual_demand(demand)
-    return json_response({"target": target})
+    return json_response({"target": target, "mode": "demand"})
+
+
+def chlor_config(server: "Server", request: Request) -> Response:
+    doser = server.runtime.chlor_doser
+    if request.payload:
+        if "design_flow" in request.payload or "effective_volume" in request.payload:
+            current = doser.hydraulics.state()
+            doser.hydraulics.configure(
+                request.float_field("design_flow", current.design_flow),
+                request.float_field("effective_volume", current.effective_volume),
+            )
+        if "ammonia_ratio" in request.payload:
+            doser.set_ammonia_ratio(request.float_field("ammonia_ratio"))
+        if "feedback_gain" in request.payload:
+            doser.set_feedback_gain(request.float_field("feedback_gain"))
+        if "feedback_cap" in request.payload:
+            doser.set_feedback_cap(request.float_field("feedback_cap"))
+        if "residual_deadband" in request.payload:
+            doser.set_residual_deadband(request.float_field("residual_deadband"))
+        if "residual_decay_rate" in request.payload:
+            doser.set_residual_decay_rate(request.float_field("residual_decay_rate"))
+        if "ammonia_incremental_threshold" in request.payload or "ammonia_change_threshold" in request.payload:
+            policy = doser.policy()
+            doser.set_water_policy(
+                request.float_field(
+                    "ammonia_incremental_threshold",
+                    policy.ammonia_incremental_threshold,
+                ),
+                request.float_field(
+                    "ammonia_change_threshold",
+                    policy.ammonia_change_threshold,
+                ),
+            )
+    hydraulics = doser.hydraulics.state(doser.measured_flow())
+    return json_response(
+        {
+            "hydraulics": hydraulics.as_dict(),
+            "policy": doser.policy().as_dict(),
+            "ammonia_ratio": doser.ammonia_ratio(),
+            "feedback_gain": doser.feedback_gain(),
+            "feedback_cap": doser.feedback_cap(),
+            "residual_deadband": doser.residual_deadband(),
+            "residual_decay_rate": doser.residual_decay_rate(),
+            "learned_bias": doser.learned_bias(),
+        }
+    )
 
 
 def chlor_dose(server: "Server", request: Request) -> Response:
-    return json_response({"dose": server.runtime.chlor_doser.apply_residual()})
+    doser = server.runtime.chlor_doser
+    ammonia = request.float_field("ammonia_n", -1.0)
+    request_id = request.str_field("request_id")
+    round_id = request.str_field("round_id")
+    round_state, applied = doser.start_round(
+        None if ammonia < 0 else ammonia,
+        request_id=request_id,
+        round_id=round_id,
+    )
+    plan = round_state.dose_plan()
+    return json_response(
+        {
+            "applied": applied,
+            "round_id": round_state.round_id,
+            "request_id": round_state.request_id,
+            "status": round_state.status,
+            "plan": plan.as_dict(),
+            "due_at": round_state.due_at,
+        }
+    )
+
+
+def chlor_round(server: "Server", request: Request) -> Response:
+    doser = server.runtime.chlor_doser
+    current = doser.rounds.current()
+    ledger = doser.rounds.ledger()
+    return json_response(
+        {
+            "current": None if current is None else current.as_dict(),
+            "count": ledger.count,
+            "rounds": list(reversed(ledger.rounds)),
+        }
+    )
+
+
+def chlor_residual_lost(server: "Server", request: Request) -> Response:
+    round_state, recorded = server.runtime.chlor_doser.mark_reading_lost(
+        round_id=request.str_field("round_id"),
+        loss_id=request.str_field("loss_id"),
+        reason=request.str_field("reason", "residual reading unavailable"),
+    )
+    return json_response(
+        {"recorded": recorded, "status": round_state.status, "round_id": round_state.round_id}
+    )
+
+
+def chlor_residual(server: "Server", request: Request) -> Response:
+    doser = server.runtime.chlor_doser
+    elapsed_raw = request.payload.get("elapsed_minutes")
+    elapsed = None if elapsed_raw is None else request.float_field("elapsed_minutes")
+    if elapsed is not None:
+        validate_elapsed_minutes(elapsed)
+    round_state, feedback, applied = doser.report_feedback(
+        request.float_field("measured_residual"),
+        elapsed_minutes=elapsed,
+        round_id=request.str_field("round_id"),
+        reading_id=request.str_field("reading_id"),
+        feedback_id=request.str_field("feedback_id"),
+        request_id=request.str_field("request_id"),
+    )
+    return json_response(
+        {
+            "applied": applied,
+            "status": round_state.status,
+            "round_id": round_state.round_id,
+            "feedback": feedback.as_dict(),
+        }
+    )
+
+
+def chlor_residual_recover(server: "Server", request: Request) -> Response:
+    doser = server.runtime.chlor_doser
+    elapsed_raw = request.payload.get("elapsed_minutes")
+    elapsed = None if elapsed_raw is None else request.float_field("elapsed_minutes")
+    if elapsed is not None:
+        validate_elapsed_minutes(elapsed)
+    round_state, feedback, applied = doser.recover_reading(
+        request.float_field("measured_residual"),
+        elapsed_minutes=elapsed,
+        round_id=request.str_field("round_id"),
+        reading_id=request.str_field("reading_id"),
+        request_id=request.str_field("request_id"),
+    )
+    return json_response(
+        {
+            "applied": applied,
+            "status": round_state.status,
+            "round_id": round_state.round_id,
+            "feedback": feedback.as_dict(),
+        }
+    )
 
 
 def clearwell_level(server: "Server", request: Request) -> Response:

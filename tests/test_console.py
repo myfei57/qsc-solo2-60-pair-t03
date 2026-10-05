@@ -42,6 +42,7 @@ class ConsoleCase(unittest.TestCase):
             "calibration",
             "residual",
             "quota",
+            "chlor_round",
             "intake",
             "ph",
             "inventory",
@@ -140,14 +141,105 @@ class ConsoleCase(unittest.TestCase):
         _, body = self.call("GET", "/coag/ratio")
         self.assertEqual(body["ratio"], 2.0)
 
-        status, body = self.call("POST", "/chlor/target", {"demand": 1.0})
+        status, body = self.call("POST", "/chlor/target", {"target": 1.0})
         self.assertEqual(body["target"], 1.0)
-        status, body = self.call("POST", "/chlor/dose", {})
-        self.assertEqual(body["dose"], 1.0)
+        status, body = self.call("POST", "/chlor/dose", {"ammonia_n": 0.0})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["plan"]["target"], 1.0)
+        self.assertEqual(body["status"], "feedforward_applied")
+        status, body = self.call(
+            "POST",
+            "/chlor/residual",
+            {"measured_residual": 1.0, "elapsed_minutes": 60.0},
+        )
+        self.assertEqual(status, 200)
 
         status, body = self.call("POST", "/clearwell/level", {"target": 12.0})
         self.assertEqual(body["level"], 12.0)
         self.assertEqual(body["min_level"], 0.0)
+
+    def test_chlorine_round_feedback_and_lost_reading_recovery(self) -> None:
+        status, body = self.call(
+            "POST",
+            "/chlor/config",
+            {"design_flow": 1000.0, "effective_volume": 1000.0},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["hydraulics"]["contact_minutes"], 60.0)
+
+        self.call("POST", "/intake/flow", {"flow": 1200.0})
+        status, config = self.call("GET", "/chlor/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(config["hydraulics"]["contact_minutes"], 50.0)
+        self.assertEqual(config["hydraulics"]["contact_source"], "measured_flow")
+
+        status, body = self.call(
+            "POST",
+            "/chlor/dose",
+            {"ammonia_n": 0.1, "request_id": "dose-1"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["plan"]["strategy"], "full_then_feedback")
+        round_id = body["round_id"]
+
+        status, body = self.call("POST", "/chlor/dose", {"request_id": "dose-1"})
+        self.assertEqual(status, 200)
+        self.assertFalse(body["applied"])
+
+        status, body = self.call("POST", "/chlor/dose", {"ammonia_n": 0.2})
+        self.assertEqual(status, 409)
+
+        status, body = self.call(
+            "POST",
+            "/chlor/residual",
+            {"round_id": round_id, "measured_residual": 0.4, "elapsed_minutes": 49.0},
+        )
+        self.assertEqual(status, 409)
+
+        status, body = self.call(
+            "POST",
+            "/chlor/residual/lost",
+            {"round_id": round_id, "loss_id": "loss-1"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "residual_reading_lost")
+        status, body = self.call(
+            "POST",
+            "/chlor/residual/lost",
+            {"round_id": round_id, "loss_id": "loss-1"},
+        )
+        self.assertFalse(body["recorded"])
+
+        status, body = self.call(
+            "POST",
+            "/chlor/residual/recover",
+            {
+                "round_id": round_id,
+                "measured_residual": 0.4,
+                "elapsed_minutes": 50.0,
+                "request_id": "recovery-1",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["applied"])
+        status, body = self.call(
+            "POST",
+            "/chlor/residual/recover",
+            {
+                "round_id": round_id,
+                "measured_residual": 0.9,
+                "elapsed_minutes": 51.0,
+                "request_id": "recovery-1",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(body["applied"])
+        self.assertEqual(body["feedback"]["measured_residual"], 0.4)
+
+        status, body = self.call("GET", "/chlor/rounds")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["current"])
+        self.assertEqual(body["rounds"][0]["round_id"], round_id)
 
     def test_filter_and_backwash_routes(self) -> None:
         for bed_id, zone, load in (("b1", 1, 4.0), ("b2", 2, 9.0), ("b3", 3, 1.0)):
@@ -225,7 +317,7 @@ class ConsoleCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["coag_dose"], 800.0)
         self.assertEqual(body["turb_dose"], 3.0)
-        self.assertEqual(body["chlor_dose"], 0.65)
+        self.assertAlmostEqual(body["chlor_dose"], 0.6748377981)
         self.assertEqual(body["rotation"], ["b1"])
         self.assertEqual(body["drains"], 1)
         self.assertEqual(body["audit_count"], 2)
@@ -296,7 +388,7 @@ class ConsoleCase(unittest.TestCase):
         status, body = self.call("GET", "/audit/totals")
         self.assertEqual(status, 200)
         self.assertEqual(body["totals"]["coagulant"], 12.0)
-        self.assertEqual(body["totals"]["chlorine"], 0.5)
+        self.assertAlmostEqual(body["totals"]["chlorine"], 0.515227267)
 
     def test_inventory_and_metrics_routes(self) -> None:
         status, body = self.call("POST", "/inventory/receive", {"chemical": "chlorine", "lot_id": "L1", "amount": 40.0})
@@ -338,7 +430,7 @@ class ConsoleCase(unittest.TestCase):
         self.call("POST", "/coag/dose", {"flow": 5.0})
         status, body = self.call("GET", "/export/audit")
         self.assertEqual(status, 200)
-        self.assertIn("time,kind,detail,id", body)
+        self.assertIn("time,kind,detail,amount,phase,round_id,id", body)
         self.assertIn("coagulant", body)
 
         status, body = self.call("GET", "/export/telemetry")

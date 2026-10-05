@@ -23,6 +23,12 @@ class Telemetry:
     clearwell_level: float
     coag_ratio: float
     chlor_target: float
+    chlor_dose_mg_l: float
+    chlor_contact_minutes: float
+    chlor_feedback_minutes: float
+    chlor_contact_source: str
+    chlor_status: str
+    chlor_round_id: str
     turbidity_verdict: float
     ph_value: float
     ph_stable: bool
@@ -45,6 +51,12 @@ class Telemetry:
             "clearwell_level": self.clearwell_level,
             "coag_ratio": self.coag_ratio,
             "chlor_target": self.chlor_target,
+            "chlor_dose_mg_l": self.chlor_dose_mg_l,
+            "chlor_contact_minutes": self.chlor_contact_minutes,
+            "chlor_feedback_minutes": self.chlor_feedback_minutes,
+            "chlor_contact_source": self.chlor_contact_source,
+            "chlor_status": self.chlor_status,
+            "chlor_round_id": self.chlor_round_id,
             "turbidity_verdict": self.turbidity_verdict,
             "ph_value": self.ph_value,
             "ph_stable": self.ph_stable,
@@ -58,6 +70,7 @@ class Telemetry:
 def collect(rt: Runtime) -> Telemetry:
     """Read every counter without mutating the control state."""
 
+    chlor = rt.chlor_doser.state()
     return Telemetry(
         store_keys=rt.store.count(),
         filter_beds=rt.bank.count(),
@@ -70,7 +83,13 @@ def collect(rt: Runtime) -> Telemetry:
         quota_value=rt.accumulator.value(),
         clearwell_level=rt.well.level(),
         coag_ratio=rt.coag_doser.current_ratio(),
-        chlor_target=rt.chlor_doser.current_target(),
+        chlor_target=chlor.target,
+        chlor_dose_mg_l=chlor.dose_mg_l,
+        chlor_contact_minutes=chlor.contact_minutes,
+        chlor_feedback_minutes=chlor.feedback_minutes,
+        chlor_contact_source=chlor.contact_source,
+        chlor_status=chlor.status,
+        chlor_round_id=chlor.round_id,
         turbidity_verdict=rt.sampler.state().last_verdict,
         ph_value=rt.stabilizer.current(),
         ph_stable=rt.stabilizer.is_stable(),

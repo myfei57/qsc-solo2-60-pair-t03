@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
+from collections.abc import Iterator
 
 
 class Store:
@@ -53,6 +55,13 @@ class Store:
         with self._lock:
             self._data[key] = value
             self._save_locked()
+
+    @contextmanager
+    def mutate(self) -> Iterator[None]:
+        """Serialize a read-modify-write sequence against other callers."""
+
+        with self._lock:
+            yield
 
     def delete(self, key: str) -> None:
         with self._lock:

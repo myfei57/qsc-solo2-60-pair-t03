@@ -41,6 +41,12 @@ def text_report(rt: Runtime) -> str:
         f"quota value={telemetry.quota_value:.4f} clearwell level={telemetry.clearwell_level:.4f}",
         f"coag ratio={telemetry.coag_ratio:.4f} chlorine target={telemetry.chlor_target:.4f}",
         (
+            f"chlor round={telemetry.chlor_round_id} status={telemetry.chlor_status} "
+            f"dose={telemetry.chlor_dose_mg_l:.4f}mg/L contact={telemetry.chlor_contact_minutes:.1f}min "
+            f"feedback_after={telemetry.chlor_feedback_minutes:.1f}min "
+            f"source={telemetry.chlor_contact_source}"
+        ),
+        (
             f"ph value={telemetry.ph_value:.4f} stable={telemetry.ph_stable} "
             f"scheduled={telemetry.schedule_due}"
         ),

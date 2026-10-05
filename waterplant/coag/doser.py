@@ -46,7 +46,12 @@ class Doser:
 
         self._flow.persist_flow(value)
         dose = self.dose_from_persisted_flow()
-        self._auditor.record(COAGULANT, f"{dose:.4f}")
+        self._auditor.record_event(
+            kind=COAGULANT,
+            detail=f"{dose:.4f}",
+            amount=dose,
+            phase="feedforward",
+        )
         return dose
 
     def dose_plan(self, flow: float, turbidity: float) -> float:

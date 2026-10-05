@@ -146,14 +146,21 @@ class DosingCase(unittest.TestCase):
             self.assertEqual(doser.dose_for_flow(3.0), 6.0)
             self.assertEqual(doser.dose_plan(1.0, 1.0), 2.0)
 
-    def test_chlorine_dose_follows_fresh_target(self) -> None:
+    def test_chlorine_dose_combines_target_ammonia_and_contact_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = Store.open(f"{tmp}/state.json")
-            doser = ChlorDoser(store)
+            doser = ChlorDoser(store, clock=lambda: 1_000.0)
             self.assertEqual(doser.current_target(), 0.5)
             Well(store).update_residual_demand(1.0)
-            self.assertEqual(doser.current_target(), 1.0)
-            self.assertEqual(doser.apply_residual(), 1.0)
+            plan = doser.plan_dose(0.1)
+            self.assertGreater(plan.dose_mg_l, 1.0)
+            self.assertEqual(plan.contact_minutes, 60.0)
+            self.assertEqual(plan.contact_source, "design_flow")
+            round_state, applied = doser.start_round(0.1)
+            self.assertTrue(applied)
+            self.assertEqual(round_state.status, "feedforward_applied")
+            with self.assertRaises(Exception):
+                doser.start_round(0.1)
             self.assertEqual(doser.target_for_demand(0.0), 0.3)
             self.assertIn("chlorine", doser.describe())
 
@@ -494,7 +501,10 @@ class ReportingCase(unittest.TestCase):
             auditor = Auditor(Store.open(f"{tmp}/state.json"))
             auditor.record("coagulant", "2.0000")
             columns, rows = audit_export(auditor)
-            self.assertEqual(columns, ["time", "kind", "detail", "id"])
+            self.assertEqual(
+                columns,
+                ["time", "kind", "detail", "amount", "phase", "round_id", "id"],
+            )
             self.assertEqual(rows[0][1], "coagulant")
             self.assertEqual(rows[0][2], "2.0000")
 
