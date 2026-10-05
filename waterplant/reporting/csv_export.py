@@ -40,3 +40,54 @@ def telemetry_export(telemetry: Telemetry) -> tuple[list[str], list[list[object]
     """Columns and rows for the telemetry counters."""
 
     return ["metric", "value"], [[key, value] for key, value in telemetry.as_dict().items()]
+
+
+def chlorination_export(auditor: Auditor) -> tuple[list[str], list[list[object]]]:
+    """Columns and rows for the feedforward/feedback chlorine audit trail."""
+
+    columns = [
+        "time",
+        "kind",
+        "round_id",
+        "sequence",
+        "phase",
+        "mg_l",
+        "kg_h",
+        "target_mg_l",
+        "ammonia_n_mg_l",
+        "contact_time_minutes",
+        "contact_basis",
+        "flow_m3h",
+        "residual_mg_l",
+        "error_mg_l",
+        "reading_id",
+        "request_id",
+        "id",
+    ]
+    rows: list[list[object]] = []
+    for entry in auditor.entries():
+        if not entry.kind.startswith("chlorine"):
+            continue
+        metadata = entry.metadata or {}
+        rows.append(
+            [
+                entry.time,
+                entry.kind,
+                metadata.get("round_id", ""),
+                metadata.get("sequence", ""),
+                metadata.get("phase", "feedback" if entry.kind.endswith("feedback") else "event"),
+                metadata.get("mg_l", entry.detail if entry.kind.endswith(("feedforward", "feedback")) else ""),
+                metadata.get("kg_h", ""),
+                metadata.get("target_mg_l", ""),
+                metadata.get("ammonia_n_mg_l", ""),
+                metadata.get("contact_time_minutes", ""),
+                metadata.get("contact_basis", ""),
+                metadata.get("flow_m3h", ""),
+                metadata.get("residual_mg_l", ""),
+                metadata.get("error_mg_l", ""),
+                metadata.get("reading_id", ""),
+                metadata.get("request_id", ""),
+                entry.id,
+            ]
+        )
+    return columns, rows

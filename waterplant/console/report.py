@@ -23,6 +23,7 @@ def text_report(rt: Runtime) -> str:
         f"intake: {describe['intake']}",
         f"coagulant: {describe['coag']}",
         f"chlorine: {describe['chlor']}",
+        f"chlorination: {describe['chlorination']}",
         f"filter: {describe['filter']}",
         f"backwash: {describe['backwash']}",
         f"turbidity: {describe['turbidity']}",
@@ -40,6 +41,10 @@ def text_report(rt: Runtime) -> str:
         f"backwash commands={rt.backwash.command_list()}",
         f"quota value={telemetry.quota_value:.4f} clearwell level={telemetry.clearwell_level:.4f}",
         f"coag ratio={telemetry.coag_ratio:.4f} chlorine target={telemetry.chlor_target:.4f}",
+        (
+            f"chlorination rounds={telemetry.chlor_rounds} active={telemetry.chlor_active} "
+            f"status={telemetry.chlor_active_status} bias={telemetry.chlor_bias_mg_l:.4f}"
+        ),
         (
             f"ph value={telemetry.ph_value:.4f} stable={telemetry.ph_stable} "
             f"scheduled={telemetry.schedule_due}"

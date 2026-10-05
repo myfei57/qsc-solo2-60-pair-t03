@@ -23,6 +23,11 @@ class Telemetry:
     clearwell_level: float
     coag_ratio: float
     chlor_target: float
+    chlor_rounds: int
+    chlor_active: str
+    chlor_active_status: str
+    chlor_bias_mg_l: float
+    chlor_residual_missing: bool
     turbidity_verdict: float
     ph_value: float
     ph_stable: bool
@@ -45,6 +50,11 @@ class Telemetry:
             "clearwell_level": self.clearwell_level,
             "coag_ratio": self.coag_ratio,
             "chlor_target": self.chlor_target,
+            "chlor_rounds": self.chlor_rounds,
+            "chlor_active": self.chlor_active,
+            "chlor_active_status": self.chlor_active_status,
+            "chlor_bias_mg_l": self.chlor_bias_mg_l,
+            "chlor_residual_missing": self.chlor_residual_missing,
             "turbidity_verdict": self.turbidity_verdict,
             "ph_value": self.ph_value,
             "ph_stable": self.ph_stable,
@@ -58,6 +68,8 @@ class Telemetry:
 def collect(rt: Runtime) -> Telemetry:
     """Read every counter without mutating the control state."""
 
+    chlorination = rt.chlorination.state()
+    active = chlorination.active_round
     return Telemetry(
         store_keys=rt.store.count(),
         filter_beds=rt.bank.count(),
@@ -71,6 +83,11 @@ def collect(rt: Runtime) -> Telemetry:
         clearwell_level=rt.well.level(),
         coag_ratio=rt.coag_doser.current_ratio(),
         chlor_target=rt.chlor_doser.current_target(),
+        chlor_rounds=chlorination.round_count,
+        chlor_active="" if active is None else active.round_id,
+        chlor_active_status="" if active is None else active.status,
+        chlor_bias_mg_l=chlorination.learned_bias_mg_l,
+        chlor_residual_missing=active is not None and active.status == "residual_missing",
         turbidity_verdict=rt.sampler.state().last_verdict,
         ph_value=rt.stabilizer.current(),
         ph_stable=rt.stabilizer.is_stable(),

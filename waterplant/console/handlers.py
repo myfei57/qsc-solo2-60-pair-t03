@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from waterplant.chlor import validate_demand
+from waterplant.chlor import ChlorinationBusyError, validate_demand, validate_residual
 from waterplant.clearwell import validate_level
 from waterplant.filter import validate_zone
 from waterplant.flow import calibrate_meter, validate_factor
@@ -13,7 +13,7 @@ from waterplant.inventory import validate_quantity
 from waterplant.ns import Stage, treatment_line
 from waterplant.ph import validate_ph
 from waterplant.quota import Quota, check_quota, validate_amount
-from waterplant.reporting import audit_export, telemetry_export, to_csv
+from waterplant.reporting import audit_export, chlorination_export, telemetry_export, to_csv
 from waterplant.scheduler import validate_threshold
 from waterplant.store import export_state
 
@@ -23,7 +23,7 @@ from . import simulate as simulate_module
 from . import snapshot as snapshot_module
 from . import telemetry as telemetry_module
 from .cycle import run_cycle
-from .http import Request, Response, csv_response, json_response, text_response
+from .http import Request, RequestError, Response, csv_response, json_response, text_response
 from .report import text_report
 from .routes import route_table
 from .system import system_payload
@@ -151,6 +151,90 @@ def chlor_target(server: "Server", request: Request) -> Response:
 
 def chlor_dose(server: "Server", request: Request) -> Response:
     return json_response({"dose": server.runtime.chlor_doser.apply_residual()})
+
+
+def chlorination_state(server: "Server", request: Request) -> Response:
+    return json_response(server.runtime.chlorination.state().as_dict())
+
+
+def chlorination_config(server: "Server", request: Request) -> Response:
+    fields = (
+        "volume_m3",
+        "design_hrt_minutes",
+        "design_flow_m3h",
+        "decay_mg_per_l_h",
+        "breakpoint_ratio",
+        "ammonia_threshold_mg_l",
+        "ammonia_change_mg_l",
+        "stable_feedforward_fraction",
+        "variable_feedforward_fraction",
+        "feedback_fraction",
+        "trim_fraction",
+        "full_step_feedback_rounds",
+        "small_step_feedback_rounds",
+        "residual_tolerance_mg_l",
+        "bias_learning_gain",
+        "max_bias_mg_l",
+    )
+    changes: dict[str, float | int] = {}
+    for field in fields:
+        if field in request.payload and request.payload.get(field) is not None:
+            value = request.payload[field]
+            changes[field] = request.int_field(field) if field.endswith("rounds") else request.float_field(field)
+    config = server.runtime.chlorination.configure(**changes) if changes else server.runtime.chlorination.config()
+    return json_response(config.as_dict())
+
+
+def chlorination_start(server: "Server", request: Request) -> Response:
+    try:
+        result = server.runtime.chlorination.start_round(
+            ammonia_n_mg_l=request.float_field("ammonia_n_mg_l"),
+            request_id=request.str_field("request_id"),
+            target_residual_mg_l=request.optional_float_field("target_residual_mg_l"),
+            flow_m3h=request.optional_float_field("flow_m3h"),
+        )
+    except ChlorinationBusyError as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response(result)
+
+
+def chlorination_residual(server: "Server", request: Request) -> Response:
+    return _chlorination_residual(server, request, recovered=False)
+
+
+def chlorination_missing(server: "Server", request: Request) -> Response:
+    try:
+        result = server.runtime.chlorination.report_missing_residual(
+            request.str_field("request_id")
+        )
+    except ChlorinationBusyError as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response(result)
+
+
+def chlorination_recover(server: "Server", request: Request) -> Response:
+    return _chlorination_residual(server, request, recovered=True)
+
+
+def _chlorination_residual(server: "Server", request: Request, recovered: bool) -> Response:
+    residual = request.float_field("residual_mg_l")
+    validate_residual(residual)
+    try:
+        if recovered:
+            result = server.runtime.chlorination.recover_residual(
+                residual_mg_l=residual,
+                reading_id=request.str_field("reading_id"),
+                request_id=request.str_field("request_id"),
+            )
+        else:
+            result = server.runtime.chlorination.observe_residual(
+                residual_mg_l=residual,
+                reading_id=request.str_field("reading_id"),
+                request_id=request.str_field("request_id"),
+            )
+    except ChlorinationBusyError as exc:
+        raise RequestError(409, str(exc)) from exc
+    return json_response(result)
 
 
 def clearwell_level(server: "Server", request: Request) -> Response:
@@ -384,4 +468,9 @@ def export_audit(server: "Server", request: Request) -> Response:
 
 def export_telemetry(server: "Server", request: Request) -> Response:
     columns, rows = telemetry_export(telemetry_module.collect(server.runtime))
+    return csv_response(to_csv(columns, rows))
+
+
+def export_chlorination(server: "Server", request: Request) -> Response:
+    columns, rows = chlorination_export(server.runtime.auditor)
     return csv_response(to_csv(columns, rows))

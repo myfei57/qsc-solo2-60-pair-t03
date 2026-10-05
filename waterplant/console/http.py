@@ -15,6 +15,7 @@ STATUS_TEXT = {
     400: "Bad Request",
     404: "Not Found",
     405: "Method Not Allowed",
+    409: "Conflict",
     500: "Internal Server Error",
 }
 
@@ -97,6 +98,11 @@ class Request:
 
     def float_field(self, name: str, default: float = 0.0) -> float:
         return _to_float(name, self.payload.get(name, default))
+
+    def optional_float_field(self, name: str) -> float | None:
+        if name not in self.payload or self.payload.get(name) is None:
+            return None
+        return _to_float(name, self.payload[name])
 
     def int_field(self, name: str, default: int = 0) -> int:
         return _to_int(name, self.payload.get(name, default))

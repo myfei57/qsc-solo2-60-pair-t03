@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 
 from waterplant.console.routes import route_table
@@ -41,6 +42,7 @@ class ConsoleCase(unittest.TestCase):
             "store",
             "calibration",
             "residual",
+            "chlorination",
             "quota",
             "intake",
             "ph",
@@ -57,6 +59,7 @@ class ConsoleCase(unittest.TestCase):
                 "intake",
                 "coag",
                 "chlor",
+                "chlorination",
                 "filter",
                 "backwash",
                 "turbidity",
@@ -148,6 +151,89 @@ class ConsoleCase(unittest.TestCase):
         status, body = self.call("POST", "/clearwell/level", {"target": 12.0})
         self.assertEqual(body["level"], 12.0)
         self.assertEqual(body["min_level"], 0.0)
+
+    def test_closed_loop_chlorination_routes(self) -> None:
+        status, body = self.call(
+            "POST",
+            "/chlorination/config",
+            {"volume_m3": 1.0, "design_hrt_minutes": 30.0},
+        )
+        self.assertEqual(status, 200)
+        status, body = self.call(
+            "POST",
+            "/chlorination/start",
+            {
+                "request_id": "start-1",
+                "ammonia_n_mg_l": 0.1,
+                "target_residual_mg_l": 0.5,
+                "flow_m3h": 1_000_000_000.0,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["round"]["water_quality"], "variable")
+        self.assertEqual(body["round"]["status"], "waiting_residual")
+        self.assertEqual(body["action"]["contact_basis"], "measured_flow")
+        self.assertLess(body["action"]["contact_time_minutes"], 0.001)
+
+        status, body = self.call(
+            "POST",
+            "/chlorination/start",
+            {
+                "request_id": "start-1",
+                "ammonia_n_mg_l": 0.2,
+                "target_residual_mg_l": 0.8,
+                "flow_m3h": 100.0,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["idempotent"])
+        self.assertEqual(body["round"]["target_residual_mg_l"], 0.5)
+
+        status, body = self.call("POST", "/chlorination/missing", {"request_id": "missing-1"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["round"]["status"], "residual_missing")
+        time.sleep(0.01)
+        status, body = self.call(
+            "POST",
+            "/chlorination/residual",
+            {"request_id": "early", "reading_id": "r0", "residual_mg_l": 0.5},
+        )
+        self.assertEqual(status, 409)
+        status, body = self.call(
+            "POST",
+            "/chlorination/recover",
+            {"request_id": "recover-1", "reading_id": "r1", "residual_mg_l": 0.5},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["closed"])
+        self.assertTrue(body["observation"]["recovered"])
+        status, body = self.call(
+            "POST",
+            "/chlorination/recover",
+            {"request_id": "recover-1", "reading_id": "r1", "residual_mg_l": 0.5},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["idempotent"])
+
+        status, body = self.call("GET", "/chlorination")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["active_round"])
+        self.assertEqual(body["last_round"]["closed_reason"], "residual_in_tolerance")
+
+        status, body = self.call(
+            "POST",
+            "/chlorination/config",
+            {"volume_m3": 500.0, "design_hrt_minutes": 45.0},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["volume_m3"], 500.0)
+        self.assertEqual(body["design_hrt_minutes"], 45.0)
+
+        status, body = self.call("GET", "/export/chlorination")
+        self.assertEqual(status, 200)
+        self.assertIn("round_id,sequence", body)
+        self.assertIn("chlorine-feedforward", body)
+        self.assertIn("chlorine-residual-recovered", body)
 
     def test_filter_and_backwash_routes(self) -> None:
         for bed_id, zone, load in (("b1", 1, 4.0), ("b2", 2, 9.0), ("b3", 3, 1.0)):

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class AuditState:
     """Every audit entry plus the total count."""
 
-    entries: list[dict[str, str]]
+    entries: list[dict[str, object]]
     count: int
 
     def as_dict(self) -> dict[str, object]:

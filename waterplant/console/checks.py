@@ -17,6 +17,25 @@ def run_checks(rt: Runtime) -> list[dict[str, str]]:
         checks.append({"name": "residual", "status": "fail", "detail": "target must be positive"})
     else:
         checks.append({"name": "residual", "status": "ok", "detail": "target set"})
+    chlorination = rt.chlorination.state()
+    if chlorination.active_round is None:
+        checks.append({"name": "chlorination", "status": "ok", "detail": "no active round"})
+    elif chlorination.active_round.status == "residual_missing":
+        checks.append(
+            {
+                "name": "chlorination",
+                "status": "warn",
+                "detail": f"round {chlorination.active_round.round_id} waiting for residual recovery",
+            }
+        )
+    else:
+        checks.append(
+            {
+                "name": "chlorination",
+                "status": "ok",
+                "detail": f"round {chlorination.active_round.round_id} waiting for residual",
+            }
+        )
     if rt.accumulator.value() < 0:
         checks.append({"name": "quota", "status": "fail", "detail": "accumulator is negative"})
     else:

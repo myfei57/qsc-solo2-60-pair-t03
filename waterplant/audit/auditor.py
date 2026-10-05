@@ -23,9 +23,18 @@ class Entry:
     time: str
     kind: str
     detail: str
+    metadata: dict[str, object] | None = None
 
-    def as_dict(self) -> dict[str, str]:
-        return {"id": self.id, "time": self.time, "kind": self.kind, "detail": self.detail}
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "id": self.id,
+            "time": self.time,
+            "kind": self.kind,
+            "detail": self.detail,
+        }
+        if self.metadata is not None:
+            payload["metadata"] = self.metadata
+        return payload
 
 
 class Auditor:
@@ -34,15 +43,39 @@ class Auditor:
     def __init__(self, store: Store) -> None:
         self._store = store
 
-    def record(self, kind: str, detail: str) -> Entry:
+    def record(
+        self, kind: str, detail: str, metadata: dict[str, object] | None = None
+    ) -> Entry:
         entry = Entry(
             id=uuid.uuid4().hex,
             time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             kind=kind,
             detail=detail,
+            metadata=metadata,
         )
         append_command(self._store, AUDIT_KEY, json.dumps(entry.as_dict(), ensure_ascii=False))
         return entry
+
+    def record_dose(
+        self, kind: str, amount: float, metadata: dict[str, object] | None = None
+    ) -> Entry:
+        """Record a numeric chemical amount in the detail field."""
+
+        return self.record(kind, f"{amount:.4f}", metadata)
+
+    def entry_payload(
+        self, kind: str, detail: str, metadata: dict[str, object] | None = None
+    ) -> tuple[str, Entry]:
+        """Build an append-list payload and its entry without persisting it."""
+
+        entry = Entry(
+            id=uuid.uuid4().hex,
+            time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            kind=kind,
+            detail=detail,
+            metadata=metadata,
+        )
+        return json.dumps(entry.as_dict(), ensure_ascii=False), entry
 
     def entries(self) -> list[Entry]:
         entries: list[Entry] = []
@@ -59,6 +92,9 @@ class Auditor:
                     time=str(payload.get("time", "")),
                     kind=str(payload.get("kind", "")),
                     detail=str(payload.get("detail", "")),
+                    metadata=payload.get("metadata")
+                    if isinstance(payload.get("metadata"), dict)
+                    else None,
                 )
             )
         return entries
